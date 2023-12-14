@@ -75,7 +75,7 @@ def power_up(instance: objects.Instance) -> None:
     if instance.numa_topology is None:
         return
 
-    cpu_dedicated_set = hardware.get_cpu_dedicated_set() or set()
+    cpu_dedicated_set = hardware.get_cpu_dedicated_set_nozero() or set()
     pcpus = instance.numa_topology.cpu_pinning
     powered_up = set()
     for pcpu in pcpus:
@@ -95,7 +95,7 @@ def power_down(instance: objects.Instance) -> None:
     if instance.numa_topology is None:
         return
 
-    cpu_dedicated_set = hardware.get_cpu_dedicated_set() or set()
+    cpu_dedicated_set = hardware.get_cpu_dedicated_set_nozero() or set()
     pcpus = instance.numa_topology.cpu_pinning
     powered_down = set()
     for pcpu in pcpus:
@@ -112,16 +112,8 @@ def power_down(instance: objects.Instance) -> None:
 def power_down_all_dedicated_cpus() -> None:
     if not CONF.libvirt.cpu_power_management:
         return
-    if (CONF.libvirt.cpu_power_management and
-        not CONF.compute.cpu_dedicated_set
-    ):
-        msg = _("'[compute]/cpu_dedicated_set' is mandatory to be set if "
-                "'[libvirt]/cpu_power_management' is set."
-                "Please provide the CPUs that can be pinned or don't use the "
-                "power management if you only use shared CPUs.")
-        raise exception.InvalidConfiguration(msg)
 
-    cpu_dedicated_set = hardware.get_cpu_dedicated_set() or set()
+    cpu_dedicated_set = hardware.get_cpu_dedicated_set_nozero() or set()
     for pcpu in cpu_dedicated_set:
         pcpu = Core(pcpu)
         if CONF.libvirt.cpu_power_management_strategy == 'cpu_state':
@@ -138,9 +130,31 @@ def validate_all_dedicated_cpus() -> None:
     governors = set()
     cpu_states = set()
     for pcpu in cpu_dedicated_set:
+        if (pcpu == 0 and
+                CONF.libvirt.cpu_power_management_strategy == 'cpu_state'):
+            LOG.warning('CPU0 is in cpu_dedicated_set, but it is not eligible '
+                        'for state management and will be ignored')
+            continue
         pcpu = Core(pcpu)
         # we need to collect the governors strategy and the CPU states
-        governors.add(pcpu.governor)
+        try:
+            governors.add(pcpu.governor)
+        except FileNotFoundError as e:
+            # NOTE(gibi): When
+            # /sys/devices/system/cpu/cpuX/cpufreq/scaling_governor does
+            # not exist it means the host OS does not support any governors.
+            # If cpu_state strategy is requested we can ignore this as
+            # governors will not be used but if governor strategy is requested
+            # we need to report an error and stop as the host is not properly
+            # configured
+            if CONF.libvirt.cpu_power_management_strategy == 'governor':
+                msg = _(
+                    "[libvirt]cpu_power_management_strategy is 'governor', "
+                    "but the host OS does not support governors for CPU%d"
+                    % pcpu.ident
+                )
+                raise exception.InvalidConfiguration(msg) from e
+
         cpu_states.add(pcpu.online)
     if CONF.libvirt.cpu_power_management_strategy == 'cpu_state':
         # all the cores need to have the same governor strategy
