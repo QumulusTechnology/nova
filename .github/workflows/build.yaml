@@ -20,7 +20,7 @@ concurrency:
 jobs:
   kolla_build:
     runs-on:
-      group: dev
+      group: prod
     environment:
       name: development
 
@@ -91,8 +91,8 @@ jobs:
           base_tag = 22.04
           namespace = ${OPENSTACK_VERSION}
           push = false
-          threads = 8
-          push_threads = 8
+          threads = 1
+          push_threads = 1
           registry = ${HARBOR_ADDR_DEV}/kolla
           install_type = source
           tag = latest
@@ -109,7 +109,29 @@ jobs:
         run: |
           sudo bash -c 'cat << EOF > /etc/kolla/template-overrides.j2
           {% extends parent_template %}
-          {% block nova_base_header %}
+          {% block nova_compute_header %}
+          RUN apt clean && \
+              apt update && \
+              apt install -y swtpm swtpm-tools && \
+              groupadd tss && \
+              useradd -g tss tss && \
+              mkdir /home/tss && \
+              chown -R tss:tss /home/tss
+          {% endblock %}
+          {% block nova_libvirt_footer %}
+          RUN apt clean && \
+              apt update && \
+              apt install -y swtpm swtpm-tools && \
+              mkdir /home/tss && \
+              chown -R tss:tss /home/tss && \
+              chown -R tss:tss /var/lib/swtpm-localca && \
+              mv /usr/share/OVMF/OVMF_CODE_4M.fd /usr/share/OVMF/OVMF_CODE_4M.fd.old && \
+              ln -s /usr/share/OVMF/OVMF_CODE_4M.secboot.fd /usr/share/OVMF/OVMF_CODE_4M.fd && \
+              mv /usr/share/OVMF/OVMF_VARS_4M.fd /usr/share/OVMF/OVMF_VARS_4M.fd.old && \
+              ln -s /usr/share/OVMF/OVMF_VARS_4M.ms.fd /usr/share/OVMF/OVMF_VARS_4M.fd
+          USER tss
+          RUN /usr/share/swtpm/swtpm-create-user-config-files
+          USER root
           {% endblock %}
           EOF'
 
