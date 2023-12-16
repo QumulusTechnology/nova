@@ -21,8 +21,6 @@ jobs:
   kolla_build:
     runs-on:
       group: prod
-    environment:
-      name: development
 
     steps:
       - name: Checkout
@@ -90,9 +88,9 @@ jobs:
           base = ubuntu
           base_tag = 22.04
           namespace = ${OPENSTACK_VERSION}
-          push = false
-          threads = 1
-          push_threads = 1
+          push = true
+          threads = 8
+          push_threads = 8
           registry = ${HARBOR_ADDR_DEV}/kolla
           install_type = source
           tag = latest
@@ -102,13 +100,17 @@ jobs:
           [${REPO_NAME}-base]
           type = local
           location = ${CWD}
-          network_mode = host
+          # network_mode = host
           EOF"
 
       - name: Create template-overrides.j2
         run: |
           sudo bash -c 'cat << EOF > /etc/kolla/template-overrides.j2
           {% extends parent_template %}
+
+          {% block base_ubuntu_package_sources_list %}
+          {% endblock %}
+
           {% block nova_compute_header %}
           RUN apt clean && \
               apt update && \
@@ -118,6 +120,7 @@ jobs:
               mkdir /home/tss && \
               chown -R tss:tss /home/tss
           {% endblock %}
+
           {% block nova_libvirt_footer %}
           RUN apt clean && \
               apt update && \
@@ -138,6 +141,7 @@ jobs:
       - name: Build docker images
         run: |
           source kolla/bin/activate
+          pip3 install docker
           kolla-build  ${REPO_NAME}
 
       - name: Tag and push docker images
