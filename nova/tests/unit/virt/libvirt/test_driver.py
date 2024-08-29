@@ -9385,7 +9385,7 @@ class LibvirtConnTestCase(test.NoDBTestCase,
 
     def test_create_snapshot_metadata(self):
         base = objects.ImageMeta.from_dict(
-            {'disk_format': 'raw'})
+            {'disk_format': 'qcow2'})
         instance_data = {'kernel_id': 'kernel',
                     'project_id': 'prj_id',
                     'ramdisk_id': 'ram_id',
@@ -9417,10 +9417,12 @@ class LibvirtConnTestCase(test.NoDBTestCase,
             {'disk_format': 'ami',
              'container_format': 'test_container'})
         expected['properties']['os_type'] = instance['os_type']
-        expected['disk_format'] = base.disk_format
+        # The disk_format of the snapshot should be the *actual* format of the
+        # thing we upload, regardless of what type of image we booted from.
+        expected['disk_format'] = img_fmt
         expected['container_format'] = base.container_format
         ret = drvr._create_snapshot_metadata(base, instance, img_fmt, snp_name)
-        self.assertEqual(ret, expected)
+        self.assertEqual(expected, ret)
 
     def test_get_volume_driver(self):
         conn = libvirt_driver.LibvirtDriver(fake.FakeVirtAPI(), False)
@@ -14477,10 +14479,11 @@ class LibvirtConnTestCase(test.NoDBTestCase,
                                             '/fake/instance/dir', disk_info)
         self.assertFalse(mock_fetch_image.called)
 
+    @mock.patch('nova.image.format_inspector.detect_file_format')
     @mock.patch('nova.privsep.path.utime')
     @mock.patch('nova.virt.libvirt.utils.create_image')
     def test_create_images_and_backing_ephemeral_gets_created(
-            self, mock_create_cow_image, mock_utime):
+            self, mock_create_cow_image, mock_utime, mock_detect):
         drvr = libvirt_driver.LibvirtDriver(fake.FakeVirtAPI(), False)
 
         base_dir = os.path.join(CONF.instances_path,
@@ -16220,11 +16223,13 @@ class LibvirtConnTestCase(test.NoDBTestCase,
         fake_mkfs.assert_has_calls([mock.call('ext4', '/dev/something',
                                               'myVol')])
 
+    @mock.patch('nova.image.format_inspector.detect_file_format')
     @mock.patch('nova.privsep.path.utime')
     @mock.patch('nova.virt.libvirt.utils.fetch_image')
     @mock.patch('nova.virt.libvirt.utils.create_image')
     def test_create_ephemeral_specified_fs_not_valid(
-            self, mock_create_cow_image, mock_fetch_image, mock_utime):
+            self, mock_create_cow_image, mock_fetch_image, mock_utime,
+            mock_detect):
         CONF.set_override('default_ephemeral_format', 'ext4')
         ephemerals = [{'device_type': 'disk',
                        'disk_bus': 'virtio',
@@ -29052,7 +29057,8 @@ class LibvirtSnapshotTests(_BaseSnapshotTests):
           utils.get_system_metadata_from_image(
             {'disk_format': 'ami'})
 
-        self._test_snapshot(disk_format='ami')
+        # If we're uploading a qcow2, we must set the disk_format as such
+        self._test_snapshot(disk_format='qcow2')
 
     @mock.patch('nova.virt.libvirt.utils.get_disk_type_from_path',
                 new=mock.Mock(return_value=None))
